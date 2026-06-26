@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from io import StringIO
 
@@ -8,7 +8,7 @@ import pandas as pd
 import requests
 
 
-# Можно оставить как есть, но безопаснее потом заменить токен в Railway через Variables.
+# Лучше потом заменить токен в Railway через Variables.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8897637264:AAEA3WAXbOTKh3H4vd0o3FdAk1fWrL62WOo")
 CHAT_ID = os.getenv("CHAT_ID", "8570214747")
 
@@ -21,6 +21,12 @@ SHEET_URL = os.getenv(
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 SEND_HOUR = int(os.getenv("SEND_HOUR", "9"))
 SEND_MINUTE = int(os.getenv("SEND_MINUTE", "0"))
+
+# За сколько дней заранее напоминать о ДР.
+REMIND_DAYS_BEFORE = int(os.getenv("REMIND_DAYS_BEFORE", "3"))
+
+# 0 = понедельник, 1 = вторник, ..., 6 = воскресенье.
+WEEKLY_DIGEST_WEEKDAY = int(os.getenv("WEEKLY_DIGEST_WEEKDAY", "0"))
 
 
 def make_csv_url(url: str) -> str:
@@ -43,7 +49,7 @@ def normalize_date(value) -> str:
 
     text = str(value).strip()
 
-    # Если Google Sheets отдал дату как 03.04 или 3.04
+    # Если дата пришла как 03.04, 3.04 или 03.04.1999
     if "." in text:
         parts = text.split(".")
         if len(parts) >= 2:
@@ -51,7 +57,7 @@ def normalize_date(value) -> str:
             month = parts[1].strip().zfill(2)
             return f"{day}.{month}"
 
-    # Если дата пришла в формате datetime/pandas
+    # Если дата пришла как полноценная дата
     parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
     if not pd.isna(parsed):
         return parsed.strftime("%d.%m")
@@ -63,8 +69,6 @@ def load_rows() -> pd.DataFrame:
     csv_url = make_csv_url(SHEET_URL)
     response = requests.get(csv_url, timeout=30)
     response.raise_for_status()
-
-    # На случай русской таблицы Google обычно отдаёт UTF-8.
     response.encoding = "utf-8"
 
     df = pd.read_csv(StringIO(response.text))
@@ -72,34 +76,56 @@ def load_rows() -> pd.DataFrame:
     return df
 
 
-def get_birthdays_today():
+def get_people() -> list[dict]:
     df = load_rows()
 
     required_columns = {"Имя", "Подразделение", "Дата"}
     missing = required_columns - set(df.columns)
+
     if missing:
         raise ValueError(f"В таблице не найдены колонки: {', '.join(missing)}")
 
-    today = datetime.now(ZoneInfo(TIMEZONE)).strftime("%d.%m")
-    birthdays = []
+    people = []
 
     for _, row in df.iterrows():
         name = str(row.get("Имя", "")).strip()
         department = str(row.get("Подразделение", "")).strip()
         date = normalize_date(row.get("Дата", ""))
 
-        if name and date == today:
-            birthdays.append({
-                "name": name,
-                "department": department,
-                "date": date,
-            })
+        if name and date:
+            people.append(
+                {
+                    "name": name,
+                    "department": department,
+                    "date": date,
+                }
+            )
 
-    return birthdays
+    return people
+
+
+def get_people_by_date(people: list[dict], target_date: datetime) -> list[dict]:
+    target = target_date.strftime("%d.%m")
+    return [person for person in people if person["date"] == target]
+
+
+def get_people_for_week(people: list[dict], start_date: datetime) -> list[dict]:
+    week_dates = {
+        (start_date + timedelta(days=i)).strftime("%d.%m")
+        for i in range(7)
+    }
+
+    result = [person for person in people if person["date"] in week_dates]
+
+    return sorted(
+        result,
+        key=lambda person: datetime.strptime(person["date"], "%d.%m").strftime("%m%d"),
+    )
 
 
 def send_message(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
     response = requests.post(
         url,
         json={
@@ -110,26 +136,108 @@ def send_message(text: str):
         },
         timeout=30,
     )
+
     response.raise_for_status()
 
 
-def build_birthday_message(birthdays) -> str | None:
+def build_today_message(birthdays: list[dict]) -> str | None:
     if not birthdays:
         return None
 
-    lines = ["🎉 <b>Сегодня день рождения:</b>", ""]
+    if len(birthdays) == 1:
+        person = birthdays[0]
+        department = person["department"] or "без подразделения"
+
+        return (
+            "🎂 <b>Сегодня день рождения!</b>\n\n"
+            f"🎉 {person['name']}\n"
+            f"📁 {department}\n\n"
+            "Поздравьте коллегу!"
+        )
+
+    lines = ["🎂 <b>Сегодня день рождения празднуют:</b>", ""]
 
     for person in birthdays:
+        department = person["department"] or "без подразделения"
+        lines.append(f"🎉 {person['name']} — {department}")
+
+    lines.append("")
+    lines.append("Поздравьте коллег!")
+
+    return "\n".join(lines)
+
+
+def build_reminder_message(upcoming: list[dict], target_date: datetime) -> str | None:
+    if not upcoming:
+        return None
+
+    target = target_date.strftime("%d.%m")
+
+    lines = [
+        f"🎈 <b>Через {REMIND_DAYS_BEFORE} дня день рождения:</b> {target}",
+        "",
+    ]
+
+    for person in upcoming:
         department = person["department"] or "без подразделения"
         lines.append(f"• {person['name']} — {department}")
 
     return "\n".join(lines)
 
 
+def build_weekly_message(weekly_birthdays: list[dict]) -> str | None:
+    if not weekly_birthdays:
+        return None
+
+    lines = ["📅 <b>Дни рождения на этой неделе:</b>", ""]
+
+    for person in weekly_birthdays:
+        department = person["department"] or "без подразделения"
+        lines.append(f"• {person['date']} — {person['name']} — {department}")
+
+    return "\n".join(lines)
+
+
+def run_daily_check():
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    people = get_people()
+
+    messages = []
+
+    # 1. День рождения сегодня
+    today_birthdays = get_people_by_date(people, now)
+    today_message = build_today_message(today_birthdays)
+
+    if today_message:
+        messages.append(today_message)
+
+    # 2. Напоминание за 3 дня
+    reminder_date = now + timedelta(days=REMIND_DAYS_BEFORE)
+    upcoming_birthdays = get_people_by_date(people, reminder_date)
+    reminder_message = build_reminder_message(upcoming_birthdays, reminder_date)
+
+    if reminder_message:
+        messages.append(reminder_message)
+
+    # 3. Недельный список по понедельникам
+    if now.weekday() == WEEKLY_DIGEST_WEEKDAY:
+        weekly_birthdays = get_people_for_week(people, now)
+        weekly_message = build_weekly_message(weekly_birthdays)
+
+        if weekly_message:
+            messages.append(weekly_message)
+
+    for message in messages:
+        send_message(message)
+
+    if not messages:
+        print("Сегодня уведомлений нет.")
+
+
 def main():
     last_sent_date = None
 
-    send_message("✅ Бот дней рождения запущен и подключён к таблице.")
+    send_message("✅ Бот дней рождения запущен. Уведомления будут приходить в 09:00 по Москве.")
 
     while True:
         now = datetime.now(ZoneInfo(TIMEZONE))
@@ -140,12 +248,7 @@ def main():
             and now.minute >= SEND_MINUTE
             and last_sent_date != today_key
         ):
-            birthdays = get_birthdays_today()
-            message = build_birthday_message(birthdays)
-
-            if message:
-                send_message(message)
-
+            run_daily_check()
             last_sent_date = today_key
 
         time.sleep(60)
