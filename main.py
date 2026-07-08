@@ -10,7 +10,7 @@ import requests
 
 # Лучше потом заменить токен в Railway через Variables.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8897637264:AAEA3WAXbOTKh3H4vd0o3FdAk1fWrL62WOo")
-CHAT_ID = os.getenv("CHAT_ID", "8570214747")
+CHAT_ID = os.getenv("CHAT_ID", "8570214747", "115023072")
 
 # Публичная ссылка на таблицу. Бот сам превращает pubhtml в CSV.
 SHEET_URL = os.getenv(
@@ -19,11 +19,11 @@ SHEET_URL = os.getenv(
 )
 
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
-SEND_HOUR = int(os.getenv("SEND_HOUR", "9"))
+SEND_HOUR = int(os.getenv("SEND_HOUR", "10"))
 SEND_MINUTE = int(os.getenv("SEND_MINUTE", "0"))
 
 # За сколько дней заранее напоминать о ДР.
-REMIND_DAYS_BEFORE = int(os.getenv("REMIND_DAYS_BEFORE", "3"))
+REMIND_DAYS_BEFORE = int(os.getenv("REMIND_DAYS_BEFORE", "1"))
 
 # 0 = понедельник, 1 = вторник, ..., 6 = воскресенье.
 WEEKLY_DIGEST_WEEKDAY = int(os.getenv("WEEKLY_DIGEST_WEEKDAY", "0"))
