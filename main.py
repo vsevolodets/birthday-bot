@@ -233,7 +233,7 @@ def run_daily_check():
 def main():
     last_sent_date = None
 
-    send_message("✅ Бот дней рождения запущен. Уведомления будут приходить в 09:00 по Москве.")
+    send_message("✅ Бот дней рождения запущен. Уведомления будут приходить в 10:00 по Москве.")
 
     while True:
         now = datetime.now(ZoneInfo(TIMEZONE))
