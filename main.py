@@ -10,7 +10,7 @@ import requests
 
 # Лучше потом заменить токен в Railway через Variables.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8897637264:AAEA3WAXbOTKh3H4vd0o3FdAk1fWrL62WOo")
-CHAT_ID = os.getenv("CHAT_ID", "8570214747", "115023072")
+CHAT_IDS = os.getenv("CHAT_IDS", "8570214747,115023072")
 
 # Публичная ссылка на таблицу. Бот сам превращает pubhtml в CSV.
 SHEET_URL = os.getenv(
@@ -124,20 +124,16 @@ def get_people_for_week(people: list[dict], start_date: datetime) -> list[dict]:
 
 
 def send_message(text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-    response = requests.post(
-        url,
-        json={
-            "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-        timeout=30,
-    )
-
-    response.raise_for_status()
+    for chat_id in CHAT_IDS.split(","):
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": chat_id.strip(),
+                "text": text,
+                "parse_mode": "HTML",
+            },
+            timeout=30,
+        ).raise_for_status()
 
 
 def build_today_message(birthdays: list[dict]) -> str | None:
